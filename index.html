@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OPPEIN — Sample 3D Render</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #F4F2EE;
+    color: #212529;
+    padding: 20px 14px 40px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  header { text-align: center; margin-bottom: 14px; }
+  .brand { color: #EF6526; font-weight: 800; letter-spacing: 3px; font-size: 13px; }
+  h1 { font-size: 24px; font-weight: 700; margin-top: 4px; }
+  .toggle {
+    display: flex; justify-content: center; gap: 0; margin: 16px auto 6px;
+    background: #E7E3DB; border-radius: 999px; padding: 4px; width: fit-content; max-width: 100%;
+  }
+  .toggle button {
+    border: 0; background: transparent; color: #212529; cursor: pointer;
+    font-size: 14px; font-weight: 600; padding: 9px 18px; border-radius: 999px;
+    transition: background .2s, color .2s; white-space: nowrap;
+  }
+  .toggle button.active { background: #EF6526; color: #fff; }
+  .card {
+    background: #FBFAF7; border: 1px solid #E3DED4; border-radius: 16px;
+    padding: 10px 6px 2px; box-shadow: 0 10px 30px rgba(33,37,41,.07);
+  }
+  svg { display: block; width: 100%; height: auto; }
+  .caption { text-align: center; color: #6c757d; font-size: 13px; margin: 12px 8px 0; }
+  .design {
+    margin: 16px auto 0; background: #fff; border: 1px solid #E3DED4; border-radius: 12px;
+    padding: 14px 16px; font-size: 13.5px; line-height: 1.65;
+  }
+  .design h2 { font-size: 14px; margin-bottom: 6px; }
+  .design h2 span { color: #EF6526; }
+  .design b { font-weight: 700; }
+  .seg { color: #495057; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">OPPEIN</div>
+    <h1>Sample 3D Render</h1>
+  </header>
+
+  <div class="toggle" role="tablist">
+    <button id="btn1" class="active" onclick="render(1)">L-Shape 10&prime; &times; 10&prime;</button>
+    <button id="btn2" onclick="render(2)">L-Shape + Island</button>
+  </div>
+
+  <div class="card">
+    <svg id="scene" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Isometric 3D kitchen render"></svg>
+  </div>
+
+  <p class="caption">Sample render generated from the 2D design data — proof of concept only.</p>
+
+  <div class="design" id="designList"></div>
+</div>
+
+<script>
+"use strict";
+/* ---------- isometric projection: front-left-above view ----------
+   screen_x = (x - y) * cos(30deg)
+   screen_y = (x + y) * sin(30deg) - z        (z up, all units inches) */
+var COS = Math.cos(Math.PI / 6), SIN = Math.sin(Math.PI / 6);
+function P(x, y, z) { return [ (x - y) * COS, (x + y) * SIN - z ]; }
+function pts(list) {
+  return list.map(function (p) { return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" ");
+}
+function poly(list, fill, stroke, sw, opacity) {
+  return '<polygon points="' + pts(list) + '" fill="' + fill + '"' +
+    (stroke ? ' stroke="' + stroke + '" stroke-width="' + (sw || 0.7) + '" stroke-linejoin="round"' : '') +
+    (opacity != null ? ' opacity="' + opacity + '"' : '') + '/>';
+}
+function shade(hex, f) {
+  var n = parseInt(hex.slice(1), 16),
+      r = Math.min(255, Math.round(((n >> 16) & 255) * f)),
+      g = Math.min(255, Math.round(((n >> 8) & 255) * f)),
+      b = Math.min(255, Math.round((n & 255) * f));
+  return "rgb(" + r + "," + g + "," + b + ")";
+}
+
+/* ---------- palette ---------- */
+var DOOR   = "#E9E3D8",   /* warm white (MNW-like) door fronts */
+    COUNTER= "#D9D5CC",   /* light stone countertop */
+    STEEL  = "#C7CCD1",   /* stainless fridge / appliances */
+    DARK   = "#2E3134",   /* cooktop / oven glass */
+    FLOORC = "#DCD6CB",
+    WALLA  = "#EFEBE3",   /* back wall (y = 0) */
+    WALLB  = "#E6E1D7",   /* right wall (x = 120) */
+    LINE   = "rgba(33,37,41,0.20)",
+    DETAIL = "rgba(33,37,41,0.30)";
+
+/* A generic cabinet box. Visible faces: top (z1), front (+y face at y1), left (-x face at x0).
+   opts: {fill, door:false, toe:true, slab:true} */
+function box(x0, y0, x1, y1, z0, z1, fill, opts) {
+  opts = opts || {};
+  var f = fill || DOOR, out = "";
+  var top  = [P(x0,y1,z1), P(x1,y1,z1), P(x1,y0,z1), P(x0,y0,z1)];
+  var front= [P(x0,y1,z0), P(x1,y1,z0), P(x1,y1,z1), P(x0,y1,z1)];
+  var left = [P(x0,y0,z0), P(x0,y1,z0), P(x0,y1,z1), P(x0,y0,z1)];
+  out += poly(left,  shade(f, 0.90), LINE);
+  out += poly(front, f, LINE);
+  out += poly(top,   shade(f, 1.05), LINE);
+  if (opts.door) { /* thin inset line on the front face */
+    var mx = (x1 - x0) * 0.09, mz = (z1 - z0) * 0.10;
+    out += poly([P(x0+mx,y1,z0+mz), P(x1-mx,y1,z0+mz), P(x1-mx,y1,z1-mz), P(x0+mx,y1,z1-mz)],
+                "none", DETAIL, 0.8);
+  }
+  return out;
+}
+/* countertop slab: 1.5in thick, slight overhang */
+function slab(x0, y0, x1, y1) {
+  return box(x0 - 0.5, y0 - 0.0, x1 + 0.5, y1 + 0.75, 33, 34.5, COUNTER, {});
+}
+/* base cabinet run piece (33in body + toe-kick shadow line) */
+function baseCab(x0, y0, x1, y1) {
+  var out = box(x0, y0, x1, y1, 0, 33, DOOR, { door: true });
+  /* toe-kick: darker recessed band drawn on the front face bottom */
+  out += poly([P(x0+0.4,y1,0.2), P(x1-0.4,y1,0.2), P(x1-0.4,y1,4), P(x0+0.4,y1,4)],
+              "rgba(33,37,41,0.13)", "none");
+  return out;
+}
+/* horizontal ellipse (circle of radius r on a z-plane), as projected polygon */
+function flatCircle(cx, cy, z, r) {
+  var a = [];
+  for (var i = 0; i < 24; i++) {
+    var t = i / 24 * Math.PI * 2;
+    a.push(P(cx + r * Math.cos(t), cy + r * Math.sin(t), z));
+  }
+  return a;
+}
+
+/* ---------- room: floor + two walls, window on back wall ---------- */
+function room(withWindow, sinkCx) {
+  var out = "";
+  /* floor */
+  out += poly([P(0,0,0), P(120,0,0), P(120,120,0), P(0,120,0)], FLOORC, LINE);
+  /* faint floor plank lines */
+  for (var fx = 24; fx < 120; fx += 24)
+    out += poly([P(fx,0,0), P(fx,120,0), P(fx,120,0.01), P(fx,0,0.01)], "rgba(33,37,41,0.05)", "none");
+  /* back wall (y=0), z 0..96 */
+  out += poly([P(0,0,0), P(120,0,0), P(120,0,96), P(0,0,96)], WALLA, LINE);
+  /* right wall (x=120), z 0..96 */
+  out += poly([P(120,0,0), P(120,120,0), P(120,120,96), P(120,0,96)], WALLB, LINE);
+  if (withWindow) {
+    /* 48in window centred over the sink on the back wall: z 42..80 */
+    var wx0 = sinkCx - 24, wx1 = sinkCx + 24;
+    out += poly([P(wx0,0,42), P(wx1,0,42), P(wx1,0,80), P(wx0,0,80)], "#BFD9E8", "#FFFFFF", 2.5);
+    out += poly([P(sinkCx,0,42), P(sinkCx,0,80), P(sinkCx,0,80.01), P(sinkCx,0,41.99)], "rgba(255,255,255,0.85)", "none");
+    out += poly([P(wx0,0,61), P(wx1,0,61), P(wx1,0,61.01), P(wx0,0,60.99)], "rgba(255,255,255,0.85)", "none");
+    /* soft light patch on the floor from the window */
+    out += poly([P(wx0+4,26,0.02), P(wx1-2,26,0.02), P(wx1+6,58,0.02), P(wx0+12,58,0.02)],
+                "rgba(255,255,255,0.20)", "none");
+  }
+  return out;
+}
+
+/* ---------- design data (segment lists, inches) ---------- */
+/* Leg A along back wall (y=0), x from 0.  Leg B along right wall (x=120), y from 0 (corner). */
+var LEG_A_BASE = [
+  { sku: "FRIDGE", w: 36 }, { sku: "B24FH", w: 24 }, { sku: "SB30", w: 30 },
+  { sku: "DW", w: 24 }, { sku: "Filler", w: 6 }
+];
+var LEG_B_BASE = [
+  { sku: "BBC42", w: 42 }, { sku: "RANGE", w: 30 }, { sku: "BSR09", w: 9 },
+  { sku: "B21FH", w: 21 }, { sku: "B18FH", w: 18 }
+];
+var ISLAND_BASE = [
+  { sku: "B24FH", w: 24 }, { sku: "SB30", w: 30 }, { sku: "DW", w: 24 }, { sku: "B24FH", w: 24 }
+];
+
+function buildScene(sample) {
+  var items = []; /* {key: x+y depth sort, svg: string} */
+  function add(key, svg) { items.push({ key: key, svg: svg }); }
+
+  /* ---- Leg A base run (against back wall, depth 24: y 0..24) ---- */
+  var x = 0, sinkCx = 0;
+  LEG_A_BASE.forEach(function (s) {
+    var x0 = x, x1 = x + s.w; x = x1;
+    if (s.sku === "FRIDGE") {
+      add(x0 + 0, box(x0, 0, x1, 24, 0, 69, STEEL, {}));
+      /* fridge door split + handles on the front face */
+      add(x0 + 0.1, poly([P(x0+18,24.05,4), P(x0+18,24.05,66), P(x0+18,24.06,66), P(x0+18,24.06,4)], "rgba(33,37,41,0.25)", "none"));
+      add(x0 + 0.1, poly([P(x0+15.6,24.1,40), P(x0+16.6,24.1,40), P(x0+16.6,24.1,58), P(x0+15.6,24.1,58)], "rgba(33,37,41,0.45)", "none"));
+      add(x0 + 0.1, poly([P(x0+19.4,24.1,40), P(x0+20.4,24.1,40), P(x0+20.4,24.1,58), P(x0+19.4,24.1,58)], "rgba(33,37,41,0.45)", "none"));
+      /* over-fridge wall cabinet W361524: 36w x 15h, top aligned at 84 */
+      add(x0 + 0.2, box(x0, 0, x1, 24, 69, 84, DOOR, { door: true }));
+    } else if (s.sku === "SB30") {
+      sinkCx = (x0 + x1) / 2;
+      add(x0 + 24, baseCab(x0, 0, x1, 24));
+    } else if (s.sku === "DW") {
+      add(x0 + 24, box(x0, 0, x1, 24, 0, 33, shade(STEEL, 1.04), {}));
+      add(x0 + 24.1, poly([P(x0+3,24.05,29.5), P(x1-3,24.05,29.5), P(x1-3,24.05,30.6), P(x0+3,24.05,30.6)], "rgba(33,37,41,0.5)", "none")); /* DW handle line */
+    } else if (s.sku === "Filler") {
+      add(x0 + 24, box(x0, 0, x1, 24, 0, 33, shade(DOOR, 0.96), {}));
+    } else {
+      add(x0 + 24, baseCab(x0, 0, x1, 24));
+    }
+  });
+  add(24.5, slab(0, 0, 120, 24));
+  /* sink inset + faucet on the counter over SB30 */
+  add(25, poly([P(sinkCx-11,4,34.55), P(sinkCx+11,4,34.55), P(sinkCx+11,20,34.55), P(sinkCx-11,20,34.55)], "#9AA0A3", LINE));
+  add(25.1, poly([P(sinkCx-9,6,34.6), P(sinkCx+9,6,34.6), P(sinkCx+9,18,34.6), P(sinkCx-9,18,34.6)], "#7E858A", "none"));
+  add(25.2, box(sinkCx-0.8, 3.2, sinkCx+0.8, 4.8, 34.5, 44, STEEL, {})); /* faucet post */
+  add(25.3, box(sinkCx-0.8, 3.2, sinkCx+0.8, 11, 42.8, 44, STEEL, {}));  /* faucet arm */
+
+  /* ---- Leg A wall cabinets (30h, 12 deep, bottom at 54) ---- */
+  add(12.3, box(36, 0, 54, 12, 54, 84, DOOR, { door: true }));    /* W1830 */
+  add(12.4, box(99, 0, 114, 12, 54, 84, DOOR, { door: true }));   /* W1530 (window gap 51..99 between) */
+
+  /* ---- Leg B base run (against right wall, depth 24: x 96..120), y from corner ---- */
+  var y = 0, rangeCy = 0;
+  LEG_B_BASE.forEach(function (s) {
+    var y0 = y, y1 = y + s.w; y = y1;
+    if (s.sku === "RANGE") {
+      rangeCy = (y0 + y1) / 2;
+      add(96 + y0, box(96, y0, 120, y1, 0, 33, DARK, {})); /* oven body */
+      add(96 + y0 + 0.1, poly([P(96.05,y0+4,6), P(96.05,y1-4,6), P(96.05,y1-4,24), P(96.05,y0+4,24)], "rgba(255,255,255,0.10)", "none")); /* oven glass on left face */
+      add(96 + y0 + 0.1, poly([P(96.05,y0+3,27.5), P(96.05,y1-3,27.5), P(96.05,y1-3,28.6), P(96.05,y0+3,28.6)], "rgba(255,255,255,0.55)", "none")); /* oven handle */
+    } else {
+      add(96 + y0, baseCab(96, y0, 120, y1));
+    }
+  });
+  add(96 + 0.5, slab(96, 0, 120, 120));
+  /* cooktop: dark slab + 4 burners on the range counter */
+  add(97, poly([P(97.5,rangeCy-13,34.55), P(119,rangeCy-13,34.55), P(119,rangeCy+13,34.55), P(97.5,rangeCy+13,34.55)], "#1F2224", "none"));
+  [[103, rangeCy-6.5, 4.6], [113.5, rangeCy-6.5, 3.6], [103, rangeCy+6.5, 3.6], [113.5, rangeCy+6.5, 4.6]].forEach(function (b) {
+    add(97.1, poly(flatCircle(b[0], b[1], 34.62, b[2]), "#3A3F42", "rgba(255,255,255,0.25)", 0.6));
+    add(97.1, poly(flatCircle(b[0], b[1], 34.63, b[2] * 0.45), "#141617", "none"));
+  });
+
+  /* ---- Leg B wall cabinets ---- */
+  /* diagonal corner wall cabinet: prism with a 45deg front face, z 54..84 */
+  var fp = [[96,0],[120,0],[120,24],[108,24],[96,12]]; /* footprint */
+  var cTop = fp.map(function (p) { return P(p[0], p[1], 84); });
+  var diagFront = [P(108,24,54), P(96,12,54), P(96,12,84), P(108,24,84)];
+  var sideFront = [P(96,12,54), P(96,0,54), P(96,0,84), P(96,12,84)];
+  add(120.5, poly(sideFront, shade(DOOR, 0.90), LINE) + poly(diagFront, DOOR, LINE) + poly(cTop, shade(DOOR, 1.05), LINE));
+  add(120.6, box(108, 42, 120, 72, 66, 84, DOOR, { door: true }));  /* W3018 over range (bottom at 66) */
+  add(120.7, box(108, 78, 120, 102, 54, 84, DOOR, { door: true })); /* W2430 */
+
+  /* ---- Island (sample 2 only): 42in clearance in front of leg A ---- */
+  if (sample === 2) {
+    var ix = 9, iy0 = 66, iy1 = 102; /* segments along x, depth 36 */
+    ISLAND_BASE.forEach(function (s) {
+      var ix0 = ix, ix1 = ix + s.w; ix = ix1;
+      if (s.sku === "DW") {
+        add(iy0 + ix0, box(ix0, iy0, ix1, iy1, 0, 33, shade(STEEL, 1.04), {}));
+        add(iy0 + ix0 + 0.1, poly([P(ix0+3,iy1+0.05,29.5), P(ix1-3,iy1+0.05,29.5), P(ix1-3,iy1+0.05,30.6), P(ix0+3,iy1+0.05,30.6)], "rgba(33,37,41,0.5)", "none"));
+      } else {
+        add(iy0 + ix0, box(ix0, iy0, ix1, iy1, 0, 33, DOOR, { door: true }));
+        add(iy0 + ix0 + 0.05, poly([P(ix0+0.4,iy1+0.02,0.2), P(ix1-0.4,iy1+0.02,0.2), P(ix1-0.4,iy1+0.02,4), P(ix0+0.4,iy1+0.02,4)], "rgba(33,37,41,0.13)", "none"));
+      }
+      if (s.sku === "SB30") {
+        var icx = (ix0 + ix1) / 2;
+        add(iy0 + ix1 + 1, poly([P(icx-11,iy0+8,34.55), P(icx+11,iy0+8,34.55), P(icx+11,iy0+28,34.55), P(icx-11,iy0+28,34.55)], "#9AA0A3", LINE));
+        add(iy0 + ix1 + 1.1, poly([P(icx-9,iy0+10,34.6), P(icx+9,iy0+10,34.6), P(icx+9,iy0+26,34.6), P(icx-9,iy0+26,34.6)], "#7E858A", "none"));
+      }
+    });
+    add(iy0 + 200, slab(9, iy0, 111, iy1)); /* plain ends, no waterfall */
+  }
+
+  /* ---- assemble: room first, then boxes far-to-near by (x + y) ---- */
+  items.sort(function (a, b) { return a.key - b.key; });
+  return room(true, sinkCx) + items.map(function (i) { return i.svg; }).join("");
+}
+
+var DESIGN_HTML = {
+  1: '<h2>Design shown — <span>L-Shape 10&prime; &times; 10&prime;</span></h2>' +
+     '<div><b>Leg A base:</b> <span class="seg">FRIDGE 36 &middot; B24FH &middot; SB30 (48&Prime; window centred over sink) &middot; DW &middot; Filler 6</span></div>' +
+     '<div><b>Leg A wall:</b> <span class="seg">W361524 over fridge &middot; W1830 &middot; window gap &middot; W1530</span></div>' +
+     '<div><b>Leg B base:</b> <span class="seg">BBC42 corner &middot; RANGE 30 &middot; BSR09 &middot; B21FH &middot; B18FH</span></div>' +
+     '<div><b>Leg B wall:</b> <span class="seg">Diagonal corner cabinet &middot; W3018 over range &middot; W2430</span></div>',
+  2: '<h2>Design shown — <span>L-Shape + Island</span></h2>' +
+     '<div><b>Leg A base:</b> <span class="seg">FRIDGE 36 &middot; B24FH &middot; SB30 (48&Prime; window centred over sink) &middot; DW &middot; Filler 6</span></div>' +
+     '<div><b>Leg A wall:</b> <span class="seg">W361524 over fridge &middot; W1830 &middot; window gap &middot; W1530</span></div>' +
+     '<div><b>Leg B base:</b> <span class="seg">BBC42 corner &middot; RANGE 30 &middot; BSR09 &middot; B21FH &middot; B18FH</span></div>' +
+     '<div><b>Leg B wall:</b> <span class="seg">Diagonal corner cabinet &middot; W3018 over range &middot; W2430</span></div>' +
+     '<div><b>Island:</b> <span class="seg">B24FH &middot; SB30 &middot; DW &middot; B24FH</span></div>'
+};
+
+function render(n) {
+  var svg = document.getElementById("scene");
+  var body = buildScene(n);
+  /* fit viewBox to the projected geometry */
+  var nums = body.match(/-?\d+\.\d/g).map(Number), xs = [], ys = [];
+  body.replace(/(-?\d+\.\d),(-?\d+\.\d)/g, function (m, a, b) { xs.push(+a); ys.push(+b); });
+  var pad = 14,
+      vx = Math.min.apply(null, xs) - pad, vy = Math.min.apply(null, ys) - pad,
+      vw = Math.max.apply(null, xs) - Math.min.apply(null, xs) + pad * 2,
+      vh = Math.max.apply(null, ys) - Math.min.apply(null, ys) + pad * 2;
+  svg.setAttribute("viewBox", vx.toFixed(1) + " " + vy.toFixed(1) + " " + vw.toFixed(1) + " " + vh.toFixed(1));
+  svg.innerHTML = body;
+  document.getElementById("designList").innerHTML = DESIGN_HTML[n];
+  document.getElementById("btn1").classList.toggle("active", n === 1);
+  document.getElementById("btn2").classList.toggle("active", n === 2);
+}
+render(1);
+</script>
+</body>
+</html>
